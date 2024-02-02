@@ -46,6 +46,11 @@ class EmailCampaign{
 
 		// $this->emailtest();
 		add_action('admin_head', [$this,'custom_post_list_page_notice']);
+		add_action("wp_ajax_sendtestemail", [$this,'sendtestemail']);
+	}
+
+	function sendtestemail(){
+		$this->sendCampaign($_POST['email'],$_POST['id']);
 	}
 
 	function getTimePassed($timestamp) {
@@ -256,7 +261,7 @@ class EmailCampaign{
 		die;
 	}
 
-	function sendCampaign(){
+	function sendCampaign($email='',$campid=''){
 		global $wpdb;
 
 		$obj=get_option( 'last_email_record' );
@@ -272,7 +277,17 @@ class EmailCampaign{
 			return;
 		}
 		
-		$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and p.post_status='publish' and cl.status='new' group by p.post_title Limit 0,1");
+		if($email){
+			$customer=$wpdb->get_row("select * from ".$wpdb->prefix."posts where post_type='pc_emails' and post_title='".$email."'");
+			$wpdb->query("insert into stock_campaign_list set campaignid=".$campid.",contactid=".$customer->ID.",listid=0,status='new'");
+
+
+			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and cl.campaignid=".$campid);
+			
+		}else{
+			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and p.post_status='publish' and cl.status='new' group by p.post_title Limit 0,1");
+		}
+		
 		// print_r($rows);die;
 
 		foreach($rows as $row){
@@ -284,7 +299,7 @@ class EmailCampaign{
 			}
 
 			$content=$this->applyCustomFields($row->body,$metas,$row->campaignid,$row->contactid);
-			$content = nl2br($content);
+			$content = wpautop($content,true);
 			$content=$content."<center><img style='width:20px;' src='https://sahajnivesh.com/logo_images/".$row->cid."/logo.png/' title='Priorcoder.com'/></center><br />";
 
 			$headers = array(
@@ -988,6 +1003,16 @@ class EmailCampaign{
 	        );
 	    }
 
+	    foreach ($screens as $screen) {
+	        add_meta_box(
+	            'campaignlist_test_box_id',           // Unique ID
+	            'Test Box',  // Box title
+	            [$this,'campaignListTestMetaBox_html'],  // Content callback, must be of type callable
+	            $screen,                  // Post type
+	            'side'
+	        );
+	    }
+
 	    $screens = ['pc_lists'];
 	    foreach ($screens as $screen) {
 	        add_meta_box(
@@ -1028,6 +1053,10 @@ class EmailCampaign{
 	            'side'
 	        );
 	    }
+	}
+
+	function campaignListTestMetaBox_html(){
+		require_once("views/campaignListTestMetaBox_html.php");
 	}
 
 	function pcSettingFieldsMetaBox_html(){
