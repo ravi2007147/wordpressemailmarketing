@@ -50,7 +50,7 @@ class EmailCampaign{
 	}
 
 	function sendtestemail(){
-		$this->sendCampaign($_POST['email'],$_POST['id']);
+		$this->sendCampaign($_POST['email'],$_POST['id'],3);
 	}
 
 	function getTimePassed($timestamp) {
@@ -126,6 +126,7 @@ class EmailCampaign{
 		$mail->SMTPDebug  = 2;                     // enables SMTP debug information (for testing)
 		
 		$mail->Port       = $row->port;                    // set the SMTP port for the GMAIL server
+		
 		if($row->service=="gmail"){
 
 			$mail->AuthType = 'XOAUTH2';
@@ -147,7 +148,7 @@ class EmailCampaign{
 		// $mail->AddReplyTo("priorcoder@gmail.com","Ravi Kumar");
 		$mail->Subject    = $subject;
 		$mail->MsgHTML($body);
-		$mail->AddAddress($to,$to);
+		$mail->AddAddress($to);
 		$mail->isHTML( true );
 		// print_r($mail);die;
 
@@ -261,7 +262,7 @@ class EmailCampaign{
 		die;
 	}
 
-	function sendCampaign($email='',$campid=''){
+	function sendCampaign($email='',$campid='',$senderaccount=''){
 		global $wpdb;
 
 		$obj=get_option( 'last_email_record' );
@@ -279,10 +280,10 @@ class EmailCampaign{
 		
 		if($email){
 			$customer=$wpdb->get_row("select * from ".$wpdb->prefix."posts where post_type='pc_emails' and post_title='".$email."'");
-			$wpdb->query("insert into stock_campaign_list set campaignid=".$campid.",contactid=".$customer->ID.",listid=0,status='new'");
+			$wpdb->query("insert into stock_campaign_list set campaignid=".$campid.",contactid=".$customer->ID.",listid=0,status='sent'");
+			$lastid = $wpdb->insert_id;
 
-
-			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and cl.campaignid=".$campid);
+			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and cl.id=".$lastid);
 			
 		}else{
 			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and p.post_status='publish' and cl.status='new' group by p.post_title Limit 0,1");
@@ -307,9 +308,13 @@ class EmailCampaign{
 				'From: Priorcoder <priorcoder@gmail.com>'
 			);
 
-			$smtplists=array(1,2,3);
+			$smtplists=array(1,2,3,4);
 			$k = array_rand($smtplists);
 			$v = $smtplists[$k];
+
+			if($senderaccount){
+				$v=$senderaccount;
+			}
 
 			// $sent=$this->smtpEmail($row->email, $row->subject, $content,1);
 			// die;
