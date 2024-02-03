@@ -10,9 +10,12 @@ $status='sent';
 
 if($_GET['showfailed']){
 	$status='failed';
+	$rows=$wpdb->get_results("select p.post_title,pl.*,pl.id as clid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list pl on pl.contactid=p.ID where p.post_type='pc_emails' and pl.campaignid=".$post->ID." and pl.status='".$status."'");
+}else{
+	$rows=$wpdb->get_results("select p.post_title,pl.*,pl.id as clid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list pl on pl.contactid=p.ID where p.post_type='pc_emails' and p.post_status='publish' and pl.campaignid=".$post->ID." and pl.status='".$status."'");
 }
 
-$rows=$wpdb->get_results("select p.post_title,pl.*,pl.id as clid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list pl on pl.contactid=p.ID where p.post_type='pc_emails' and p.post_status='publish' and pl.campaignid=".$post->ID." and pl.status='".$status."'");
+
 ?>
 <p>
 	Total Emails : <?php echo $totalSent; ?>

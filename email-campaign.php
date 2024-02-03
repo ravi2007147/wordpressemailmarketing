@@ -23,6 +23,7 @@ class EmailCampaign{
 		add_action( 'save_post', [$this,'save_template_post'], 10,3 );
 		add_action( 'save_post', [$this,'handle_list_upload'], 10,3 );
 		add_action( 'save_post', [$this,'handle_setting_update'], 10,3 );
+		add_action( 'save_post', [$this,'save_contact'], 10,3 );
 		add_action('admin_print_scripts', [$this,'my_admin_scripts']);
 		add_action('admin_print_styles', [$this,'my_admin_styles']);
 		add_filter( 'mime_types', [$this,'wpse_mime_types'] );
@@ -50,7 +51,7 @@ class EmailCampaign{
 	}
 
 	function sendtestemail(){
-		$this->sendCampaign($_POST['email'],$_POST['id'],3);
+		$this->sendCampaign($_POST['email'],$_POST['id'],6,true);
 	}
 
 	function getTimePassed($timestamp) {
@@ -96,9 +97,9 @@ class EmailCampaign{
 	        ?>
 	        <div class="notice notice-info">
 	            <p>Last campaign sent on : <?php echo $this->getTimePassed($row->datetime); ?></p>
-	            <p>Today Found Email : <?php echo $total_today_sites; ?> <a href="/wp-admin/edit.php?post_type=pc_campaign&downloadtodaylist=1">Download List</a></p>
+	            <p>Today Found Email : <?php echo $total_today_sites; ?></p>
 	            <p>Pending Websites : <?php echo $pending_sites; ?></p>
-	            <p>Pending Pages : <?php echo $pending_pages; ?> <a href="/wp-admin/edit.php?post_type=pc_campaign&deletependingrecord=1">Clear List</a></p>
+	            <p>Pending Pages : <?php echo $pending_pages; ?></p>
 	            <p>Emails In Queue : <?php echo $queueemails; ?></p>
 	        </div>
 	        <?php
@@ -144,7 +145,7 @@ class EmailCampaign{
 			$mail->Password   = $row->password;        // SMTP account password
 		}
 		
-		$mail->SetFrom($row->username, 'Ravi Kumar');
+		$mail->SetFrom($row->email, 'Ravi Kumar');
 		// $mail->AddReplyTo("priorcoder@gmail.com","Ravi Kumar");
 		$mail->Subject    = $subject;
 		$mail->MsgHTML($body);
@@ -262,7 +263,7 @@ class EmailCampaign{
 		die;
 	}
 
-	function sendCampaign($email='',$campid='',$senderaccount=''){
+	function sendCampaign($email='',$campid='',$senderaccount='',$bypass=false){
 		global $wpdb;
 
 		$obj=get_option( 'last_email_record' );
@@ -274,8 +275,14 @@ class EmailCampaign{
 		}
 		
 		//pause after sending 100 emails
-		if($obj['total']>=100 && (strtotime($obj['datetime'])==strtotime(date('Y-m-d')))){
+		if($obj['total']>=100 && (strtotime($obj['datetime'])==strtotime(date('Y-m-d'))) && !$bypass){
 			return;
+		}else{
+			if(!$bypass && (strtotime($obj['datetime'])!=strtotime(date('Y-m-d')))){
+				$obj=array();
+				$obj['total']=0;
+				$obj['datetime']=date('Y-m-d');
+			}
 		}
 		
 		if($email){
@@ -286,7 +293,7 @@ class EmailCampaign{
 			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and cl.id=".$lastid);
 			
 		}else{
-			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and p.post_status='publish' and cl.status='new' group by p.post_title Limit 0,1");
+			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and p.post_status='publish' and cl.status='new' group by p.post_title Limit 0,3");
 		}
 		
 		// print_r($rows);die;
@@ -308,7 +315,7 @@ class EmailCampaign{
 				'From: Priorcoder <priorcoder@gmail.com>'
 			);
 
-			$smtplists=array(1,2,3,4);
+			$smtplists=array(1,2,3,4,6);
 			$k = array_rand($smtplists);
 			$v = $smtplists[$k];
 
@@ -342,7 +349,7 @@ class EmailCampaign{
 
 			echo $row->email;
 			echo "<br />";
-			die;
+			sleep(5);
 		}
 
 		$rows=$wpdb->get_results("select * from stock_posts where post_type='pc_campaign' and post_status='sending'");
@@ -370,7 +377,13 @@ class EmailCampaign{
 		global $wpdb;
 		$csv=array();
 		$csv[]="WebsiteName,domain,email,location";
-		$rows=$wpdb->get_results("select * from polls_stocknewswebsites where lastChecked='".date('Y-m-d')."' and email is not null");
+		$query="select * from polls_stocknewswebsites where lastChecked='".$_GET['date']."' and email is not null";
+
+		if($_GET['location']){
+			$query .=" and city like '%".$_GET['location']."%' ";
+		}
+
+		$rows=$wpdb->get_results($query);
 
 		foreach($rows as $row){
 			$csv[]=$row->websiteName.",".$row->domain.",".$row->email.",".str_replace(","," ",$row->city);
@@ -773,6 +786,20 @@ class EmailCampaign{
 		}
 	}
 
+	function save_contact($post_id){
+		global $wpdb;
+		if($_POST['post_type']!="pc_emails"){
+			return;
+		}
+
+		// Remove the action to prevent a loop
+        remove_action('save_post', [$this, 'save_template_post']);
+
+        if(isset($_POST['contact_status']) && strlen(@$_POST['contact_status'])>0){
+        	update_post_meta($post_id,'contact_status',$_POST['contact_status']);
+        }
+	}
+
 	function save_template_post($post_id){
 		global $wpdb;
 		if($_POST['post_type']!="pc_campaign"){
@@ -1058,6 +1085,21 @@ class EmailCampaign{
 	            'side'
 	        );
 	    }
+
+	    $screens = ['pc_emails'];
+	    foreach ($screens as $screen) {
+	        add_meta_box(
+	            'campaignsync_pc_email_box_id',           // Unique ID
+	            'Contact Status',  // Box title
+	            [$this,'campaignContactMetaBox_html'],  // Content callback, must be of type callable
+	            $screen,                  // Post type
+	            'side'
+	        );
+	    }
+	}
+
+	function campaignContactMetaBox_html(){
+		require_once("views/campaignContactMetaBox_html.php");
 	}
 
 	function campaignListTestMetaBox_html(){
@@ -1101,6 +1143,19 @@ class EmailCampaign{
 			'dashicons-book',
 			6
 		);
+
+		add_submenu_page(
+	        'pc_email_campaign',
+	        __( 'Tools', 'textdomain' ),
+	        __( 'Tools', 'textdomain' ),
+	        'manage_options',
+	        'pc-tools',
+	        [$this,'pc_tools']
+	    );
+	}
+
+	function pc_tools(){
+		require_once("views/tools.php");
 	}
 
 	function email_campaign(){

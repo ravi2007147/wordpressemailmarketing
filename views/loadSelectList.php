@@ -3,7 +3,7 @@ global $wpdb,$post;
 $rows=$wpdb->get_results("select * from ".$wpdb->prefix."posts where post_type='pc_lists' and post_status='publish'");
 $listid=get_post_meta($post->ID,'c_list',true);
 
-if(!$listid){
+if($post->post_status=="publish"){
 ?>
 <p>
 	<select name="list" style="width: 100%;">
@@ -18,11 +18,12 @@ if(!$listid){
 	</select>
 </p>
 <?php
-}else{
-	foreach($rows as $row){
-		if($row->ID==$listid){
-			echo $row->post_title;
-		}
-	}
 }
+// else{
+// 	foreach($rows as $row){
+// 		if($row->ID==$listid){
+// 			echo $row->post_title;
+// 		}
+// 	}
+// }
 ?>
