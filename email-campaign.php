@@ -21,6 +21,7 @@ class EmailCampaign{
 		add_action( 'init', [ $this, 'init_func' ] );
 		add_action('add_meta_boxes', [$this,'addMetaBoxes']);
 		add_action( 'save_post', [$this,'save_template_post'], 10,3 );
+		add_action( 'save_post', [$this,'save_feed_post'], 10,3 );
 		add_action( 'save_post', [$this,'handle_list_upload'], 10,3 );
 		add_action( 'save_post', [$this,'handle_setting_update'], 10,3 );
 		add_action( 'save_post', [$this,'save_contact'], 10,3 );
@@ -51,7 +52,7 @@ class EmailCampaign{
 	}
 
 	function sendtestemail(){
-		$this->sendCampaign($_POST['email'],$_POST['id'],6,true);
+		$this->sendCampaign($_POST['email'],$_POST['id'],3,true);
 	}
 
 	function getTimePassed($timestamp) {
@@ -106,9 +107,10 @@ class EmailCampaign{
 	    }
 	}
 
-	function smtpEmail($to,$subject,$body,$id){
+	function smtpEmail($to,$subject,$body,$id,$clientid=''){
 		global $wpdb;
-		$row=$wpdb->get_row("select * from ".$wpdb->prefix."email_clients where id=".$id);
+		$row=$wpdb->get_row("select * from ".$wpdb->prefix."email_clients where id=".($clientid?$clientid:$id));
+		
 
 		// if($row->service=="gmail"){
 		// 	$mail = new PHPMailerOAuth();
@@ -196,14 +198,16 @@ class EmailCampaign{
 		$region="";
 		$country="";
 
-		if($ip_address){
-			$ldata=json_decode(file_get_contents("http://ipinfo.io/".$ip_address."/json"));
-			$city=$ldata->city;
-			$region=$ldata->region;
-			$country=$ldata->country;
-		}
+		
 
 	    if (get_query_var('logo_images')) {
+	    	if($ip_address){
+				$ldata=json_decode(file_get_contents("http://ipinfo.io/".$ip_address."/json"));
+				$city=$ldata->city;
+				$region=$ldata->region;
+				$country=$ldata->country;
+			}
+
 	    	global $wpdb;
 	    	
 	    	$lid=get_query_var('cid');
@@ -224,19 +228,35 @@ class EmailCampaign{
 	    	$cid=(int)get_query_var('contactid');
 	    	$url=urldecode($_GET['u']);
 
-	    	if($id && $url){
+	    	$isimage=strpos($url,"myc.jpg");
 
-	    		$row=$wpdb->get_row("select * from ".$wpdb->prefix."posts where post_type='pc_campaign' and ID=".$id);
-	    		// print_r($row);die;
-	    		if($row){
-	    			if(!$cid){
-	    				$cid="";
-	    			}
+	    	if($id && $url && $isimage===false){
+	    		$js_capable = get_browser(null, true);
+	    		if($js_capable['javascript']){
+	    			if($ip_address){
+						$ldata=json_decode(file_get_contents("http://ipinfo.io/".$ip_address."/json"));
+						$city=$ldata->city;
+						$region=$ldata->region;
+						$country=$ldata->country;
+					}
 
-	    			$wpdb->query("insert into ".$wpdb->prefix."campaign_link_tracking set contactid=".$cid.",url_link='".urlencode($url)."',campaignid=".$id.",ipaddress='".$ip_address."',city='".$city."',region='".$region."',country='".$country."'");
+	    			$row=$wpdb->get_row("select * from ".$wpdb->prefix."posts where post_type='pc_campaign' and ID=".$id);
+		    		// print_r($row);die;
+		    		if($row){
+		    			if(!$cid){
+		    				$cid="";
+		    			}
+
+		    			$wpdb->query("insert into ".$wpdb->prefix."campaign_link_tracking set contactid=".$cid.",url_link='".urlencode($url)."',campaignid=".$id.",ipaddress='".$ip_address."',city='".$city."',region='".$region."',country='".$country."'");
+		    		}
+		    		header("Location:".$url);
+	    		}else{
+	    			header("Location:".$url);
 	    		}
+	    	}else{
+	    		header("Location:".$url);
 	    	}
-	    	header("Location:".$url);
+	    	
 	    	die;
 	    }
 	}
@@ -245,15 +265,28 @@ class EmailCampaign{
 		global $wpdb;
 
 		$rows=$wpdb->get_results("select * from ".$wpdb->prefix."posts where post_type='pc_campaign' and post_status='segmented' Limit 0,1");
+		$emailClients=$wpdb->get_results("select * from ".$wpdb->prefix."email_clients where status='active'");
+		$totalClients=count($emailClients);
 
+		
 		foreach($rows as $row){
 			$listid=get_post_meta($row->ID,'c_list',true);
 
 			if($listid){
 				$contacts=$wpdb->get_results("select * from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."user_list ul on ul.contactid=p.ID where p.post_status='publish' and p.post_type='pc_emails' and ul.listid=".$listid);
+				$contactPerClient=ceil(count($contacts)/$totalClients);
 
+				$ccounter=0;
+				$clientNumber=0;
 				foreach($contacts as $contact){
-					$wpdb->query("insert into ".$wpdb->prefix."campaign_list set campaignid=".$row->ID.",contactid=".$contact->ID.",listid=".$listid.",status='new'");
+					$ccounter = $ccounter + 1;
+					
+					$wpdb->query("insert into ".$wpdb->prefix."campaign_list set campaignid=".$row->ID.",contactid=".$contact->ID.",listid=".$listid.",status='new',emailClientID=".$emailClients[$clientNumber]->id);
+
+					if($ccounter==$contactPerClient){
+						$clientNumber = $clientNumber + 1;
+						$ccounter=0;
+					}
 				}
 			}
 
@@ -293,7 +326,7 @@ class EmailCampaign{
 			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and cl.id=".$lastid);
 			
 		}else{
-			$rows=$wpdb->get_results("select p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and p.post_status='publish' and cl.status='new' group by p.post_title Limit 0,3");
+			$rows=$wpdb->get_results("select ec.id as clientid,p.post_title as email,p.ID as contactid,pm.post_content as body,pm.post_title as subject,cl.id as cid,cl.campaignid from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."campaign_list cl on cl.contactid=p.ID INNER JOIN ".$wpdb->prefix."email_clients ec on ec.id=cl.emailClientID INNER JOIN ".$wpdb->prefix."posts pm on pm.ID=cl.campaignid and pm.post_type='pc_campaign' where p.post_type='pc_emails' and p.post_status='publish' and cl.status='new' group by p.post_title Limit 0,3");
 		}
 		
 		// print_r($rows);die;
@@ -329,7 +362,7 @@ class EmailCampaign{
 			if($v==0){
 				$sent=wp_mail($row->email, $row->subject, $content, $headers );
 			}else{
-				$sent=$this->smtpEmail($row->email, $row->subject, $content,$v);
+				$sent=$this->smtpEmail($row->email, $row->subject, $content,$v,$row->clientid);
 			}
 
 			if($sent){
@@ -358,6 +391,9 @@ class EmailCampaign{
 			$notsent=$wpdb->get_var("select count(*) as ccount from ".$wpdb->prefix."campaign_list where campaignid=".$row->ID." and status='new'");
 
 			if($notsent<=0){
+				if(!$bypass){
+					update_option('last_campaign_sent',date('Y-m-d H:i:s'));
+				}
 				$wpdb->query("update ".$wpdb->prefix."posts set post_status='sent' where ID=".$row->ID);
 			}
 		}
@@ -402,8 +438,19 @@ class EmailCampaign{
 		$wpdb->query("delete from polls_stocknewswebsitepages");
 	}
 
+	function loadfeed(){
+		global $wpdb;
+
+		$rows=$wpdb->get_results("select * from ".$wpdb->prefix."posts where post_status='publish' and post_type='pc_feeds'");
+	}
+
 	function loading_func(){
 		global $wpdb;
+
+		if(isset($_GET['loadfeed'])){
+			$this->loadfeed();
+			die;
+		}
 
 		if(isset($_GET['deletependingrecords'])){
 			$this->deletependingrecords();
@@ -786,6 +833,20 @@ class EmailCampaign{
 		}
 	}
 
+	function save_feed_post($post_id){
+		global $wpdb;
+		if($_POST['post_type']!="pc_feeds"){
+			return;
+		}
+
+		// Remove the action to prevent a loop
+        remove_action('save_post', [$this, 'save_feed_post']);
+
+        if(isset($_POST['feedurl']) && strlen(@$_POST['feedurl'])>0){
+        	update_post_meta($post_id,'feedurl',$_POST['feedurl']);
+        }
+	}
+
 	function save_contact($post_id){
 		global $wpdb;
 		if($_POST['post_type']!="pc_emails"){
@@ -797,6 +858,10 @@ class EmailCampaign{
 
         if(isset($_POST['contact_status']) && strlen(@$_POST['contact_status'])>0){
         	update_post_meta($post_id,'contact_status',$_POST['contact_status']);
+        }
+
+        if(isset($_POST['phonenumber']) && strlen(@$_POST['phonenumber'])>0){
+        	update_post_meta($post_id,'phonenumber',$_POST['phonenumber']);
         }
 	}
 
@@ -1006,7 +1071,34 @@ class EmailCampaign{
 	  );
 	  register_post_type( 'pc_lists', $args2 );
 
-	  
+
+	  $labels2 = array(
+	    'name'               => _x( 'Feeds', 'post type general name' ),
+	    'singular_name'      => _x( 'Feed', 'post type singular name' ),
+	    'add_new'            => _x( 'Add New', 'feed' ),
+	    'add_new_item'       => __( 'Add New Feed' ),
+	    'edit_item'          => __( 'Edit Feed' ),
+	    'new_item'           => __( 'New Feed' ),
+	    'all_items'          => __( 'All Feeds' ),
+	    'view_item'          => __( 'View Feed' ),
+	    'search_items'       => __( 'Search Feed' ),
+	    'not_found'          => __( 'No Feeds found' ),
+	    'not_found_in_trash' => __( 'No Feeds found in the Trash' ), 
+	    'parent_item_colon'  => ’,
+	    'menu_name'          => 'Feeds'
+	  );
+
+	  $args2 = array(
+	    'labels'        => $labels2,
+	    'description'   => 'Holds our products and product specific data',
+	    'public'        => false,
+	    'menu_position' => 8,
+	    'supports'      => array( 'title'),
+	    'has_archive'   => true,
+	    'show_in_menu'=>'pc_email_campaign',
+	    'show_ui'            => true,
+	  );
+	  register_post_type( 'pc_feeds', $args2 );
 	}
 
 	function addMetaBoxes(){
@@ -1096,10 +1188,38 @@ class EmailCampaign{
 	            'side'
 	        );
 	    }
+
+	    $screens = ['pc_feeds'];
+	    foreach ($screens as $screen) {
+	        add_meta_box(
+	            'campaignsync_pc_feeds_box_id',           // Unique ID
+	            'Feed URL',  // Box title
+	            [$this,'campaignFeedMetaBox_html'],  // Content callback, must be of type callable
+	            $screen
+	        );
+	    }
+
+	    $screens = ['pc_emails'];
+	    foreach ($screens as $screen) {
+	        add_meta_box(
+	            'campaignsync_pc_email_box_id_params',           // Unique ID
+	            'Information',  // Box title
+	            [$this,'campaignContactMetaBoxFull_html'],  // Content callback, must be of type callable
+	            $screen
+	        );
+	    }
+	}
+
+	function campaignFeedMetaBox_html(){
+		require_once("views/campaignFeedMetaBox_html.php");
 	}
 
 	function campaignContactMetaBox_html(){
 		require_once("views/campaignContactMetaBox_html.php");
+	}
+
+	function campaignContactMetaBoxFull_html(){
+		require_once("views/campaignContactMetaBoxFull_html.php");
 	}
 
 	function campaignListTestMetaBox_html(){
