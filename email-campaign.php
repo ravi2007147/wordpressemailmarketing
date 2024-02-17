@@ -43,6 +43,7 @@ class EmailCampaign{
 		    $query_vars[] = 'linkid';
 		    $query_vars[] = 'cid';
 		    $query_vars[] = 'contactid';
+		    $query_vars[] = 'unsubscribe';
 		    return $query_vars;
 		} );
 
@@ -189,7 +190,7 @@ class EmailCampaign{
 	}
 
 	function template_handler() {
-		if (get_query_var('logo_images') || get_query_var('hyperlink')) {}else{
+		if (get_query_var('logo_images') || get_query_var('hyperlink') || get_query_var('unsubscribe')) {}else{
 			return;
 		}
 		$ip_address = $this->get_client_ip();
@@ -222,6 +223,13 @@ class EmailCampaign{
 			header("Content-type: {$imginfo['mime']}");
 			readfile($remoteImage);
 			die;
+	    }else if (get_query_var('unsubscribe')) {
+	    	global $wpdb;
+	    	// $id=(int)get_query_var('hyperlink');
+	    	$cid=(int)get_query_var('contactid');
+	    	$wpdb->query("update ".$wpdb->prefix."posts set post_status='bounce' where ID=".$cid);
+	    	header("Location:https://priorcoder.com/unsubscribe");
+	    	die;
 	    }else if (get_query_var('hyperlink')) {
 	    	global $wpdb;
 	    	$id=(int)get_query_var('hyperlink');
@@ -728,6 +736,7 @@ class EmailCampaign{
 				$content=str_replace("[".$key."]",$meta,$content);
 			}
 		}
+		$content = str_replace("%7Bcontactid%7D",$contactid,$content);
 
 		return $content;
 	}
@@ -906,6 +915,7 @@ class EmailCampaign{
 		add_rewrite_rule('^logo_images/(.*)/(.*)\.png$', 'index.php?logo_images=$matches[2]&cid=$matches[1]', 'top');
 		add_rewrite_rule('^hyperlink/(.*)/(.*)$', 'index.php?hyperlink=$matches[1]&contactid=$matches[2]', 'top');
 		add_rewrite_rule('^hyperlink/(.*)$', 'index.php?hyperlink=$matches[1]&contactid=$matches[2]', 'top');
+		add_rewrite_rule('^unsubscribe/(.*)$', 'index.php?unsubscribe=$matches[1]&contactid=$matches[1]', 'top');
 		//end
 
 		$labels = array(
