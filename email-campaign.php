@@ -17,6 +17,11 @@ include_once(__DIR__.'/class.phpmaileroauth.php');
 
 class EmailCampaign{
 	public function __construct() {
+		// Start session for OAuth callback
+		if(!session_id()){
+			session_start();
+		}
+		
 		add_action( 'admin_menu', [ $this, 'plugin_menu' ] );
 		add_action( 'init', [ $this, 'init_func' ] );
 		add_action('add_meta_boxes', [$this,'addMetaBoxes']);
@@ -44,6 +49,7 @@ class EmailCampaign{
 		    $query_vars[] = 'cid';
 		    $query_vars[] = 'contactid';
 		    $query_vars[] = 'unsubscribe';
+		    $query_vars[] = 'gmail_oauth_callback';
 		    return $query_vars;
 		} );
 
@@ -209,6 +215,12 @@ class EmailCampaign{
 	}
 
 	function template_handler() {
+		// Handle Gmail OAuth callback
+		if (get_query_var('gmail_oauth_callback')) {
+			$this->system_user_oauth_callback();
+			return;
+		}
+		
 		if (get_query_var('logo_images') || get_query_var('hyperlink') || get_query_var('unsubscribe')) {}else{
 			return;
 		}
@@ -1080,6 +1092,7 @@ class EmailCampaign{
 		add_rewrite_rule('^hyperlink/(.*)/(.*)$', 'index.php?hyperlink=$matches[1]&contactid=$matches[2]', 'top');
 		add_rewrite_rule('^hyperlink/(.*)$', 'index.php?hyperlink=$matches[1]&contactid=$matches[2]', 'top');
 		add_rewrite_rule('^unsubscribe/(.*)$', 'index.php?unsubscribe=$matches[1]&contactid=$matches[1]', 'top');
+		add_rewrite_rule('^gmail-oauth-callback$', 'index.php?gmail_oauth_callback=1', 'top');
 		//end
 
 		$labels = array(
@@ -1704,6 +1717,11 @@ class EmailCampaign{
 	function system_user_get_auth_url(){
 		global $wpdb;
 		
+		// Start session if not started
+		if(!session_id()){
+			session_start();
+		}
+		
 		if(!isset($_POST['id'])){
 			wp_send_json_error(array('message' => 'Missing record ID'));
 		}
@@ -1719,11 +1737,17 @@ class EmailCampaign{
 			wp_send_json_error(array('message' => 'Client ID is missing'));
 		}
 		
-		$redirect_uri = admin_url('admin-ajax.php?action=system_user_oauth_callback&id='.$id);
-		$scope = 'https://mail.google.com/';
+		// Store ID in session
+		$_SESSION['gmail_oauth_record_id'] = $id;
+		
+		// Use slug-based callback URL
+		$redirect_uri = site_url('/gmail-oauth-callback');
+		
+		// Use gmail.send scope (production-safe, avoids heavy verification)
+		$scope = 'https://www.googleapis.com/auth/gmail.send';
 		$response_type = 'code';
-		$access_type = 'offline';
-		$prompt = 'consent';
+		$access_type = 'offline'; // Required to get refresh_token
+		$prompt = 'consent'; // Force consent screen to get refresh_token
 		
 		$auth_url = 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query(array(
 			'client_id' => $record->clientid,
@@ -1752,8 +1776,18 @@ class EmailCampaign{
 			$token_data = json_decode(stripslashes($token_data), true);
 		}
 		
+		// Format token data as specified
+		$formatted_token = array(
+			'access_token' => isset($token_data['access_token']) ? $token_data['access_token'] : '',
+			'expires_in' => isset($token_data['expires_in']) ? $token_data['expires_in'] : 3600,
+			'refresh_token' => isset($token_data['refresh_token']) ? $token_data['refresh_token'] : '',
+			'scope' => isset($token_data['scope']) ? $token_data['scope'] : 'https://mail.google.com/',
+			'token_type' => isset($token_data['token_type']) ? $token_data['token_type'] : 'Bearer',
+			'created' => isset($token_data['created']) ? $token_data['created'] : time()
+		);
+		
 		// Convert to JSON string format as specified
-		$token_json = json_encode($token_data);
+		$token_json = json_encode($formatted_token);
 		
 		$updated = $wpdb->update(
 			$wpdb->prefix.'email_clients',
@@ -1770,28 +1804,50 @@ class EmailCampaign{
 		}
 	}
 
-	// Handle OAuth callback
+	// Handle OAuth callback - Step 3: Exchange code for tokens
 	function system_user_oauth_callback(){
 		global $wpdb;
 		
-		if(!isset($_GET['id']) || !isset($_GET['code'])){
-			echo '<script>window.close();</script>';
+		// Start session if not started
+		if(!session_id()){
+			session_start();
+		}
+		
+		if(!isset($_GET['code'])){
+			if(isset($_GET['error'])){
+				echo '<script>alert("Authorization error: ' . esc_js($_GET['error']) . '"); if(window.opener){window.opener.location.reload();} window.close();</script>';
+			} else {
+				echo '<script>if(window.opener){window.opener.location.reload();} window.close();</script>';
+			}
 			die();
 		}
 		
-		$id = intval($_GET['id']);
 		$code = sanitize_text_field($_GET['code']);
+		
+		// Get record ID from session
+		$id = null;
+		if(isset($_SESSION['gmail_oauth_record_id'])){
+			$id = intval($_SESSION['gmail_oauth_record_id']);
+			// Clear session after use
+			unset($_SESSION['gmail_oauth_record_id']);
+		}
+		
+		if(!$id){
+			echo '<script>alert("Session expired. Please try authorizing again."); if(window.opener){window.opener.location.reload();} window.close();</script>';
+			die();
+		}
 		
 		$record = $wpdb->get_row($wpdb->prepare("SELECT * FROM ".$wpdb->prefix."email_clients WHERE id=%d", $id));
 		
 		if(!$record || empty($record->clientid) || empty($record->secret)){
-			echo '<script>alert("Invalid record or missing credentials"); window.close();</script>';
+			echo '<script>alert("Invalid record or missing credentials"); if(window.opener){window.opener.location.reload();} window.close();</script>';
 			die();
 		}
 		
-		$redirect_uri = admin_url('admin-ajax.php?action=system_user_oauth_callback&id='.$id);
+		// Use slug-based callback URL
+		$redirect_uri = site_url('/gmail-oauth-callback');
 		
-		// Exchange code for token
+		// Step 3: Exchange authorization code for tokens
 		$token_url = 'https://oauth2.googleapis.com/token';
 		$token_data = array(
 			'code' => $code,
@@ -1803,11 +1859,14 @@ class EmailCampaign{
 		
 		$response = wp_remote_post($token_url, array(
 			'body' => $token_data,
-			'timeout' => 30
+			'timeout' => 30,
+			'headers' => array(
+				'Content-Type' => 'application/x-www-form-urlencoded'
+			)
 		));
 		
 		if(is_wp_error($response)){
-			echo '<script>alert("Error: ' . esc_js($response->get_error_message()) . '"); window.close();</script>';
+			echo '<script>alert("Error: ' . esc_js($response->get_error_message()) . '"); if(window.opener){window.opener.location.reload();} window.close();</script>';
 			die();
 		}
 		
@@ -1815,16 +1874,31 @@ class EmailCampaign{
 		$token_response = json_decode($body, true);
 		
 		if(isset($token_response['error'])){
-			echo '<script>alert("Error: ' . esc_js($token_response['error_description']) . '"); window.close();</script>';
+			$error_msg = isset($token_response['error_description']) ? $token_response['error_description'] : $token_response['error'];
+			echo '<script>alert("Error: ' . esc_js($error_msg) . '"); if(window.opener){window.opener.location.reload();} window.close();</script>';
 			die();
 		}
 		
-		// Add created timestamp
-		$token_response['created'] = time();
+		// Ensure we have refresh_token (critical for long-term use)
+		if(empty($token_response['refresh_token'])){
+			// If no refresh_token, we might need to re-authorize with prompt=consent
+			echo '<script>alert("Warning: No refresh token received. You may need to re-authorize with consent."); if(window.opener){window.opener.location.reload();} window.close();</script>';
+			die();
+		}
 		
-		// Save token
-		$token_json = json_encode($token_response);
-		$wpdb->update(
+		// Format token data as specified
+		$formatted_token = array(
+			'access_token' => $token_response['access_token'],
+			'expires_in' => isset($token_response['expires_in']) ? $token_response['expires_in'] : 3600,
+			'refresh_token' => $token_response['refresh_token'], // This is the KEY - store permanently
+			'scope' => isset($token_response['scope']) ? $token_response['scope'] : 'https://www.googleapis.com/auth/gmail.send',
+			'token_type' => isset($token_response['token_type']) ? $token_response['token_type'] : 'Bearer',
+			'created' => time()
+		);
+		
+		// Save token (refresh_token is stored permanently)
+		$token_json = json_encode($formatted_token);
+		$updated = $wpdb->update(
 			$wpdb->prefix.'email_clients',
 			array('token' => $token_json),
 			array('id' => $id),
@@ -1832,18 +1906,22 @@ class EmailCampaign{
 			array('%d')
 		);
 		
-		// Send message to parent and close
-		echo '<script>
-			if(window.opener){
-				window.opener.postMessage("oauth_success", "*");
-				setTimeout(function(){
+		if($updated !== false){
+			// Success - close popup and refresh parent
+			echo '<script>
+				if(window.opener){
+					window.opener.postMessage("oauth_success", "*");
+					setTimeout(function(){
+						window.close();
+					}, 500);
+				} else {
+					alert("Authorization successful! Refresh token has been saved.");
 					window.close();
-				}, 500);
-			} else {
-				alert("Authorization successful! Token has been saved.");
-				window.close();
-			}
-		</script>';
+				}
+			</script>';
+		} else {
+			echo '<script>alert("Error saving token to database"); if(window.opener){window.opener.location.reload();} window.close();</script>';
+		}
 		die();
 	}
 

@@ -1,8 +1,8 @@
 <?php
 global $wpdb;
 
-// Get the redirect URI for Gmail OAuth
-$redirect_uri_base = admin_url('admin-ajax.php?action=system_user_oauth_callback');
+// Get the redirect URI for Gmail OAuth (slug-based)
+$redirect_uri = site_url('/gmail-oauth-callback');
 ?>
 
 <div class="wrap">
@@ -13,15 +13,17 @@ $redirect_uri_base = admin_url('admin-ajax.php?action=system_user_oauth_callback
 		<h3 style="margin-top: 0;">Gmail OAuth Redirect URI</h3>
 		<p>Add this redirect URI to your Google Cloud Console OAuth 2.0 Client IDs:</p>
 		<div style="background: #f0f0f0; padding: 10px; border-radius: 4px; margin: 10px 0; display: flex; align-items: center; gap: 10px;">
-			<code id="redirect-uri-display" style="flex: 1; word-break: break-all;"><?php echo esc_html($redirect_uri_base); ?>&id=*</code>
+			<code id="redirect-uri-display" style="flex: 1; word-break: break-all;"><?php echo esc_html($redirect_uri); ?></code>
 			<button type="button" class="button" id="copy-redirect-uri" title="Copy to clipboard">
 				<span class="dashicons dashicons-clipboard" style="margin-top: 3px;"></span> Copy
 			</button>
 		</div>
 		<p class="description">
-			<strong>Note:</strong> The <code>id=*</code> parameter will vary for each record. In Google Cloud Console, you can either:
-			<br>1. Add the exact pattern above (if supported), or
-			<br>2. Add the base URI: <code><?php echo esc_html($redirect_uri_base); ?></code> and ensure your OAuth client allows dynamic query parameters.
+			<strong>Important:</strong> 
+			<br>1. Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console → APIs & Services → Credentials</a>
+			<br>2. Edit your OAuth 2.0 Client ID
+			<br>3. Add the redirect URI above to "Authorized redirect URIs"
+			<br>4. Scope used: <code>https://www.googleapis.com/auth/gmail.send</code> (production-safe, avoids heavy verification)
 		</p>
 	</div>
 	
@@ -450,7 +452,7 @@ jQuery(document).ready(function($) {
 		loadRecords(currentPage);
 	});
 
-	// Authorize/Re-Authorize Gmail
+	// Authorize/Re-Authorize Gmail using OAuth redirect flow
 	$(document).on('click', '.authorize-record', function() {
 		var id = $(this).data('id');
 		var $btn = $(this);
@@ -458,6 +460,7 @@ jQuery(document).ready(function($) {
 		
 		$btn.prop('disabled', true).text('Loading...');
 		
+		// Get authorization URL from backend (stores ID in session)
 		$.ajax({
 			url: ajaxurl,
 			type: 'POST',
@@ -498,11 +501,15 @@ jQuery(document).ready(function($) {
 						}
 					}, 500);
 					
-					// Also listen for message from popup (if needed)
+					// Listen for message from popup
 					window.addEventListener('message', function(event) {
 						if(event.data === 'oauth_success') {
-							popup.close();
+							clearInterval(checkClosed);
+							if(popup && !popup.closed) {
+								popup.close();
+							}
 							loadRecords(currentPage);
+							$btn.prop('disabled', false).text(originalText);
 						}
 					});
 					
@@ -518,53 +525,6 @@ jQuery(document).ready(function($) {
 		});
 	});
 
-	// Copy redirect URI to clipboard
-	$('#copy-redirect-uri').on('click', function() {
-		var redirectUri = $('#redirect-uri-display').text();
-		
-		// Create a temporary input element
-		var tempInput = $('<input>');
-		$('body').append(tempInput);
-		tempInput.val(redirectUri).select();
-		
-		try {
-			// Try using the modern Clipboard API
-			if(navigator.clipboard && window.isSecureContext) {
-				navigator.clipboard.writeText(redirectUri).then(function() {
-					// Show success feedback
-					var $btn = $('#copy-redirect-uri');
-					var originalText = $btn.html();
-					$btn.html('<span class="dashicons dashicons-yes-alt" style="margin-top: 3px; color: #46b450;"></span> Copied!');
-					$btn.css('color', '#46b450');
-					
-					setTimeout(function() {
-						$btn.html(originalText);
-						$btn.css('color', '');
-					}, 2000);
-				}).catch(function(err) {
-					// Fallback to execCommand
-					document.execCommand('copy');
-					alert('Redirect URI copied to clipboard!');
-				});
-			} else {
-				// Fallback for older browsers
-				document.execCommand('copy');
-				var $btn = $('#copy-redirect-uri');
-				var originalText = $btn.html();
-				$btn.html('<span class="dashicons dashicons-yes-alt" style="margin-top: 3px; color: #46b450;"></span> Copied!');
-				$btn.css('color', '#46b450');
-				
-				setTimeout(function() {
-					$btn.html(originalText);
-					$btn.css('color', '');
-				}, 2000);
-			}
-		} catch(err) {
-			alert('Failed to copy. Please select and copy manually.');
-		}
-		
-		tempInput.remove();
-	});
 
 	// Initial load
 	loadRecords(0);
