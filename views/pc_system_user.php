@@ -1,9 +1,29 @@
 <?php
 global $wpdb;
+
+// Get the redirect URI for Gmail OAuth
+$redirect_uri_base = admin_url('admin-ajax.php?action=system_user_oauth_callback');
 ?>
 
 <div class="wrap">
 	<h1>System User Management</h1>
+	
+	<!-- Gmail Redirect URI Notice -->
+	<div class="notice notice-info" style="margin: 20px 0; padding: 15px;">
+		<h3 style="margin-top: 0;">Gmail OAuth Redirect URI</h3>
+		<p>Add this redirect URI to your Google Cloud Console OAuth 2.0 Client IDs:</p>
+		<div style="background: #f0f0f0; padding: 10px; border-radius: 4px; margin: 10px 0; display: flex; align-items: center; gap: 10px;">
+			<code id="redirect-uri-display" style="flex: 1; word-break: break-all;"><?php echo esc_html($redirect_uri_base); ?>&id=*</code>
+			<button type="button" class="button" id="copy-redirect-uri" title="Copy to clipboard">
+				<span class="dashicons dashicons-clipboard" style="margin-top: 3px;"></span> Copy
+			</button>
+		</div>
+		<p class="description">
+			<strong>Note:</strong> The <code>id=*</code> parameter will vary for each record. In Google Cloud Console, you can either:
+			<br>1. Add the exact pattern above (if supported), or
+			<br>2. Add the base URI: <code><?php echo esc_html($redirect_uri_base); ?></code> and ensure your OAuth client allows dynamic query parameters.
+		</p>
+	</div>
 	
 	<div style="margin-bottom: 20px;">
 		<button type="button" class="button button-primary" id="add-new-record">Add New Record</button>
@@ -496,6 +516,54 @@ jQuery(document).ready(function($) {
 				$btn.prop('disabled', false).text(originalText);
 			}
 		});
+	});
+
+	// Copy redirect URI to clipboard
+	$('#copy-redirect-uri').on('click', function() {
+		var redirectUri = $('#redirect-uri-display').text();
+		
+		// Create a temporary input element
+		var tempInput = $('<input>');
+		$('body').append(tempInput);
+		tempInput.val(redirectUri).select();
+		
+		try {
+			// Try using the modern Clipboard API
+			if(navigator.clipboard && window.isSecureContext) {
+				navigator.clipboard.writeText(redirectUri).then(function() {
+					// Show success feedback
+					var $btn = $('#copy-redirect-uri');
+					var originalText = $btn.html();
+					$btn.html('<span class="dashicons dashicons-yes-alt" style="margin-top: 3px; color: #46b450;"></span> Copied!');
+					$btn.css('color', '#46b450');
+					
+					setTimeout(function() {
+						$btn.html(originalText);
+						$btn.css('color', '');
+					}, 2000);
+				}).catch(function(err) {
+					// Fallback to execCommand
+					document.execCommand('copy');
+					alert('Redirect URI copied to clipboard!');
+				});
+			} else {
+				// Fallback for older browsers
+				document.execCommand('copy');
+				var $btn = $('#copy-redirect-uri');
+				var originalText = $btn.html();
+				$btn.html('<span class="dashicons dashicons-yes-alt" style="margin-top: 3px; color: #46b450;"></span> Copied!');
+				$btn.css('color', '#46b450');
+				
+				setTimeout(function() {
+					$btn.html(originalText);
+					$btn.css('color', '');
+				}, 2000);
+			}
+		} catch(err) {
+			alert('Failed to copy. Please select and copy manually.');
+		}
+		
+		tempInput.remove();
 	});
 
 	// Initial load
