@@ -27,6 +27,113 @@ $redirect_uri = site_url('/gmail-oauth-callback');
 		</p>
 	</div>
 	
+	<!-- Gmail Token Refresh Cron URL -->
+	<div class="notice notice-success" style="margin: 20px 0; padding: 15px;">
+		<h3 style="margin-top: 0;">Gmail Token Refresh Cron</h3>
+		<p>Set up a cron job to refresh Gmail tokens every 55 minutes:</p>
+		<div style="background: #f0f0f0; padding: 10px; border-radius: 4px; margin: 10px 0; display: flex; align-items: center; gap: 10px;">
+			<code id="cron-url-display" style="flex: 1; word-break: break-all;"><?php echo esc_html(site_url('/gmail-refresh-tokens')); ?></code>
+			<button type="button" class="button" id="copy-cron-url" title="Copy to clipboard">
+				<span class="dashicons dashicons-clipboard" style="margin-top: 3px;"></span> Copy
+			</button>
+		</div>
+		
+		<div style="margin-top: 20px; padding: 15px; background: #fff; border: 1px solid #ddd; border-radius: 4px;">
+			<h4 style="margin-top: 0;">📋 Cron Setup Instructions</h4>
+			
+			<div style="margin-bottom: 20px;">
+				<strong>Method 1: cPanel Cron Jobs (Recommended)</strong>
+				<ol style="margin-left: 20px; margin-top: 10px;">
+					<li>Log in to your cPanel</li>
+					<li>Go to <strong>Advanced → Cron Jobs</strong></li>
+					<li>Select <strong>"Every 55 minutes"</strong> or use custom: <code>*/55 * * * *</code></li>
+					<li>In the command field, enter:
+						<div style="background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px;">
+							<code>curl -s "<?php echo esc_html(site_url('/gmail-refresh-tokens')); ?>"</code>
+						</div>
+					</li>
+					<li>Click <strong>Add New Cron Job</strong></li>
+				</ol>
+			</div>
+			
+			<div style="margin-bottom: 20px;">
+				<strong>Method 2: Server Crontab (SSH Access)</strong>
+				<ol style="margin-left: 20px; margin-top: 10px;">
+					<li>SSH into your server</li>
+					<li>Run: <code>crontab -e</code></li>
+					<li>Add this line:
+						<div style="background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px;">
+							<code>*/55 * * * * curl -s "<?php echo esc_html(site_url('/gmail-refresh-tokens')); ?>"</code>
+						</div>
+					</li>
+					<li>Save and exit (usually <code>:wq</code> in vi/vim)</li>
+				</ol>
+			</div>
+			
+			<div style="margin-bottom: 20px;">
+				<strong>Method 3: WordPress Cron (wp_schedule_event)</strong>
+				<p style="margin-top: 10px;">Add this to your theme's <code>functions.php</code> or a custom plugin:</p>
+				<div style="background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px; overflow-x: auto;">
+					<pre style="margin: 0;">// Schedule Gmail token refresh
+if (!wp_next_scheduled('gmail_refresh_tokens_cron')) {
+    wp_schedule_event(time(), 'gmail_refresh_interval', 'gmail_refresh_tokens_cron');
+}
+
+// Add custom interval (55 minutes)
+add_filter('cron_schedules', function($schedules) {
+    $schedules['gmail_refresh_interval'] = array(
+        'interval' => 3300, // 55 minutes in seconds
+        'display' => 'Every 55 Minutes'
+    );
+    return $schedules;
+});
+
+// Hook the cron event
+add_action('gmail_refresh_tokens_cron', function() {
+    wp_remote_get(site_url('/gmail-refresh-tokens'));
+});</pre>
+				</div>
+			</div>
+			
+			<div style="margin-bottom: 20px; padding: 10px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+				<strong>🔒 Security (Optional but Recommended):</strong>
+				<ol style="margin-left: 20px; margin-top: 10px;">
+					<li>Add this to your <code>wp-config.php</code>:
+						<div style="background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px;">
+							<code>define('GMAIL_REFRESH_SECRET', 'your-random-secret-key-here');</code>
+						</div>
+					</li>
+					<li>Update your cron command to include the key:
+						<div style="background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px;">
+							<code>curl -s "<?php echo esc_html(site_url('/gmail-refresh-tokens?key=your-random-secret-key-here')); ?>"</code>
+						</div>
+					</li>
+				</ol>
+			</div>
+			
+			<div style="padding: 10px; background: #d1ecf1; border-left: 4px solid #0c5460; border-radius: 4px;">
+				<strong>ℹ️ How It Works:</strong>
+				<ul style="margin-left: 20px; margin-top: 10px;">
+					<li>Runs every 55 minutes automatically</li>
+					<li>Checks all active Gmail records with tokens</li>
+					<li>Refreshes access tokens before they expire (tokens last 1 hour)</li>
+					<li>Preserves refresh tokens (they don't change)</li>
+					<li>Updates token JSON in database automatically</li>
+					<li>Returns JSON response with refresh statistics</li>
+				</ul>
+			</div>
+			
+			<div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+				<strong>🧪 Test the Endpoint:</strong>
+				<p style="margin: 5px 0;">Visit the URL directly in your browser or run:</p>
+				<div style="background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px;">
+					<code>curl "<?php echo esc_html(site_url('/gmail-refresh-tokens')); ?>"</code>
+				</div>
+				<p style="margin: 5px 0;">You should see a JSON response with refresh statistics.</p>
+			</div>
+		</div>
+	</div>
+	
 	<div style="margin-bottom: 20px;">
 		<button type="button" class="button button-primary" id="add-new-record">Add New Record</button>
 		<button type="button" class="button" id="refresh-list">Refresh List</button>
@@ -525,6 +632,55 @@ jQuery(document).ready(function($) {
 		});
 	});
 
+
+	// Copy redirect URI to clipboard
+	$('#copy-redirect-uri').on('click', function() {
+		var redirectUri = $('#redirect-uri-display').text();
+		copyToClipboard(redirectUri, $(this));
+	});
+
+	// Copy cron URL to clipboard
+	$('#copy-cron-url').on('click', function() {
+		var cronUrl = $('#cron-url-display').text();
+		copyToClipboard(cronUrl, $(this));
+	});
+
+	// Generic copy to clipboard function
+	function copyToClipboard(text, $button) {
+		var tempInput = $('<input>');
+		$('body').append(tempInput);
+		tempInput.val(text).select();
+		
+		try {
+			if(navigator.clipboard && window.isSecureContext) {
+				navigator.clipboard.writeText(text).then(function() {
+					showCopySuccess($button);
+				}).catch(function(err) {
+					document.execCommand('copy');
+					showCopySuccess($button);
+				});
+			} else {
+				document.execCommand('copy');
+				showCopySuccess($button);
+			}
+		} catch(err) {
+			alert('Failed to copy. Please select and copy manually.');
+		}
+		
+		tempInput.remove();
+	}
+
+	// Show copy success feedback
+	function showCopySuccess($button) {
+		var originalText = $button.html();
+		$button.html('<span class="dashicons dashicons-yes-alt" style="margin-top: 3px; color: #46b450;"></span> Copied!');
+		$button.css('color', '#46b450');
+		
+		setTimeout(function() {
+			$button.html(originalText);
+			$button.css('color', '');
+		}, 2000);
+	}
 
 	// Initial load
 	loadRecords(0);

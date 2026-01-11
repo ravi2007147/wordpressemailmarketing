@@ -50,6 +50,7 @@ class EmailCampaign{
 		    $query_vars[] = 'contactid';
 		    $query_vars[] = 'unsubscribe';
 		    $query_vars[] = 'gmail_oauth_callback';
+		    $query_vars[] = 'gmail_refresh_tokens';
 		    return $query_vars;
 		} );
 
@@ -218,6 +219,12 @@ class EmailCampaign{
 		// Handle Gmail OAuth callback
 		if (get_query_var('gmail_oauth_callback')) {
 			$this->system_user_oauth_callback();
+			return;
+		}
+		
+		// Handle Gmail token refresh cron
+		if (get_query_var('gmail_refresh_tokens')) {
+			$this->gmail_refresh_tokens_cron();
 			return;
 		}
 		
@@ -1093,6 +1100,7 @@ class EmailCampaign{
 		add_rewrite_rule('^hyperlink/(.*)$', 'index.php?hyperlink=$matches[1]&contactid=$matches[2]', 'top');
 		add_rewrite_rule('^unsubscribe/(.*)$', 'index.php?unsubscribe=$matches[1]&contactid=$matches[1]', 'top');
 		add_rewrite_rule('^gmail-oauth-callback$', 'index.php?gmail_oauth_callback=1', 'top');
+		add_rewrite_rule('^gmail-refresh-tokens$', 'index.php?gmail_refresh_tokens=1', 'top');
 		//end
 
 		$labels = array(
@@ -1922,6 +1930,126 @@ class EmailCampaign{
 		} else {
 			echo '<script>alert("Error saving token to database"); if(window.opener){window.opener.location.reload();} window.close();</script>';
 		}
+		die();
+	}
+
+	// Cron endpoint to refresh Gmail tokens every 55 minutes
+	function gmail_refresh_tokens_cron(){
+		global $wpdb;
+		
+		// Optional: Add a secret key check for security
+		$secret_key = isset($_GET['key']) ? sanitize_text_field($_GET['key']) : '';
+		// You can set a secret key in wp-config.php: define('GMAIL_REFRESH_SECRET', 'your-secret-key');
+		if(defined('GMAIL_REFRESH_SECRET') && $secret_key !== GMAIL_REFRESH_SECRET){
+			wp_die('Unauthorized', 'Unauthorized', array('response' => 401));
+		}
+		
+		// Get all Gmail records with tokens
+		$gmail_records = $wpdb->get_results("SELECT * FROM ".$wpdb->prefix."email_clients WHERE service='gmail' AND token IS NOT NULL AND token != '' AND status='active'");
+		
+		$refreshed = 0;
+		$failed = 0;
+		$skipped = 0;
+		
+		foreach($gmail_records as $record){
+			// Parse token JSON
+			$token_data = json_decode($record->token, true);
+			
+			if(!$token_data || empty($token_data['refresh_token'])){
+				$skipped++;
+				continue;
+			}
+			
+			// Check if token needs refresh (55 minutes = 3300 seconds, but we refresh proactively)
+			$created = isset($token_data['created']) ? intval($token_data['created']) : 0;
+			$expires_in = isset($token_data['expires_in']) ? intval($token_data['expires_in']) : 3600;
+			$expires_at = $created + $expires_in;
+			$current_time = time();
+			
+			// Refresh if expired or will expire in next 5 minutes
+			if($current_time < ($expires_at - 300)){
+				$skipped++;
+				continue; // Token still valid, skip
+			}
+			
+			// Refresh the token
+			$refresh_token = $token_data['refresh_token'];
+			$client_id = $record->clientid;
+			$client_secret = $record->secret;
+			
+			if(empty($client_id) || empty($client_secret)){
+				$failed++;
+				continue;
+			}
+			
+			// Call Google token refresh endpoint
+			$token_url = 'https://oauth2.googleapis.com/token';
+			$refresh_data = array(
+				'client_id' => $client_id,
+				'client_secret' => $client_secret,
+				'refresh_token' => $refresh_token,
+				'grant_type' => 'refresh_token'
+			);
+			
+			$response = wp_remote_post($token_url, array(
+				'body' => $refresh_data,
+				'timeout' => 30,
+				'headers' => array(
+					'Content-Type' => 'application/x-www-form-urlencoded'
+				)
+			));
+			
+			if(is_wp_error($response)){
+				$failed++;
+				continue;
+			}
+			
+			$body = wp_remote_retrieve_body($response);
+			$new_token_response = json_decode($body, true);
+			
+			if(isset($new_token_response['error'])){
+				$failed++;
+				continue;
+			}
+			
+			// Update token data with new access_token
+			// Keep the original refresh_token (it doesn't change)
+			$updated_token = array(
+				'access_token' => $new_token_response['access_token'],
+				'expires_in' => isset($new_token_response['expires_in']) ? $new_token_response['expires_in'] : 3600,
+				'refresh_token' => $refresh_token, // Keep original refresh_token
+				'scope' => isset($new_token_response['scope']) ? $new_token_response['scope'] : (isset($token_data['scope']) ? $token_data['scope'] : 'https://www.googleapis.com/auth/gmail.send'),
+				'token_type' => isset($new_token_response['token_type']) ? $new_token_response['token_type'] : 'Bearer',
+				'created' => time() // Update created timestamp
+			);
+			
+			// Save updated token
+			$token_json = json_encode($updated_token);
+			$updated = $wpdb->update(
+				$wpdb->prefix.'email_clients',
+				array('token' => $token_json),
+				array('id' => $record->id),
+				array('%s'),
+				array('%d')
+			);
+			
+			if($updated !== false){
+				$refreshed++;
+			} else {
+				$failed++;
+			}
+		}
+		
+		// Return JSON response for cron monitoring
+		header('Content-Type: application/json');
+		echo json_encode(array(
+			'success' => true,
+			'refreshed' => $refreshed,
+			'failed' => $failed,
+			'skipped' => $skipped,
+			'total' => count($gmail_records),
+			'timestamp' => time()
+		));
 		die();
 	}
 
