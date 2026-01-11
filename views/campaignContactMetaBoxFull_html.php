@@ -1,6 +1,6 @@
 <?php
 	global $post;
-	$phonenumber=get_post_meta($post->ID,'phonenumber',true);
+	$phonenumber=get_post_meta($post->ID);
 ?>
 <div class="flex-grid">
 	<div>

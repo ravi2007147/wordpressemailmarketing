@@ -50,6 +50,14 @@ class EmailCampaign{
 		// $this->emailtest();
 		add_action('admin_head', [$this,'custom_post_list_page_notice']);
 		add_action("wp_ajax_sendtestemail", [$this,'sendtestemail']);
+		add_action("wp_ajax_system_user_create", [$this,'system_user_create']);
+		add_action("wp_ajax_system_user_update", [$this,'system_user_update']);
+		add_action("wp_ajax_system_user_delete", [$this,'system_user_delete']);
+		add_action("wp_ajax_system_user_read", [$this,'system_user_read']);
+		add_action("wp_ajax_system_user_get", [$this,'system_user_get']);
+		add_action("wp_ajax_system_user_save_token", [$this,'system_user_save_token']);
+		add_action("wp_ajax_system_user_get_auth_url", [$this,'system_user_get_auth_url']);
+		add_action("wp_ajax_system_user_oauth_callback", [$this,'system_user_oauth_callback']);
 	}
 
 	function sendtestemail(){
@@ -96,6 +104,16 @@ class EmailCampaign{
 	    	$queueemails=$wpdb->get_var("select count(*) from stock_campaign_list where status='new'");
 	    	// echo date('Y-m-d H:i:s');
 	    	// print_r($row->datetime);die;
+
+	    	$obj=get_option( 'last_email_record' );
+
+			if(!$obj){
+				$obj=array();
+				$obj['total']=0;
+				$obj['datetime']=date('Y-m-d');
+			}
+			
+			
 	        ?>
 	        <div class="notice notice-info">
 	            <p>Last campaign sent on : <?php echo $this->getTimePassed($row->datetime); ?></p>
@@ -103,6 +121,7 @@ class EmailCampaign{
 	            <p>Pending Websites : <?php echo $pending_sites; ?></p>
 	            <p>Pending Pages : <?php echo $pending_pages; ?></p>
 	            <p>Emails In Queue : <?php echo $queueemails; ?></p>
+	            <p>Total Emails Sent Today : <?php echo $obj['total']; ?> (<?php echo $obj['datetime']; ?>)</p>
 	        </div>
 	        <?php
 	    }
@@ -308,7 +327,7 @@ class EmailCampaign{
 		global $wpdb;
 
 		$obj=get_option( 'last_email_record' );
-
+		// $obj=0;
 		if(!$obj){
 			$obj=array();
 			$obj['total']=0;
@@ -446,14 +465,159 @@ class EmailCampaign{
 		$wpdb->query("delete from polls_stocknewswebsitepages");
 	}
 
+	function downloadPage($url){
+		// echo $url;die;
+		$ips=explode("\n",file_get_contents(__DIR__."/ips.txt"));
+		$random_keys=array_rand($ips);
+		$ip=$ips[$random_keys];
+
+		$useragents=explode("\n",file_get_contents(__DIR__."/useragent.txt"));
+		$random_keys=array_rand($useragents);
+		$useragent=$useragents[$random_keys];
+		$ch = curl_init();
+		curl_setopt($ch, CURLOPT_URL,$url);
+		// curl_setopt($ch, CURLOPT_PROXY, $ip);
+		curl_setopt($curl, CURLOPT_USERAGENT, $useragent);
+		curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+		curl_setopt($ch, CURLOPT_HEADER, 1);
+		$curl_scraped_page = curl_exec($ch);
+		curl_close($ch);
+		return $curl_scraped_page;
+	}
+
+	function scrapData(){
+		global $wpdb;
+		$query="select * from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."postmeta pm1 on pm1.post_id=p.ID and pm1.meta_key='pc_feed_post_date' LEFT JOIN ".$wpdb->prefix."postmeta pm2 on pm2.post_id=p.ID and pm2.meta_key='pc_scrapped'  where p.post_type='pc_feed_posts' and p.post_status='publish' and pm2.meta_value  is NULL  order by pm1.meta_value desc";
+		$row=$wpdb->get_row($query);
+		
+		if($row){
+			$metas=get_post_meta($row->ID);
+			$output=$this->downloadPage($metas['pc_feed_post_link'][0]);
+			echo $output;die;
+			print_r($metas['pc_feed_post_link'][0]);die;
+		}
+
+		die;
+	}
+
 	function loadfeed(){
 		global $wpdb;
 
-		$rows=$wpdb->get_results("select * from ".$wpdb->prefix."posts where post_status='publish' and post_type='pc_feeds'");
+		$rows=$wpdb->get_results("select *,pm.meta_value as feedurl from ".$wpdb->prefix."posts p INNER JOIN ".$wpdb->prefix."postmeta pm on pm.post_id=p.ID and pm.meta_key='feedurl' where post_status='publish' and post_type='pc_feeds'");
+
+		foreach($rows as $row){
+			$pcid=$row->ID;
+			// echo $fileContents= file_get_contents($row->feedurl);die;
+			$feed = new DOMDocument();
+			$feed->load($row->feedurl);
+			$json = array();
+
+			$json['title'] = $feed->getElementsByTagName('channel')->item(0)->getElementsByTagName('title')->item(0)->firstChild->nodeValue;
+			// print_r($feed->getElementsByTagName('channel')->item(0)->getElementsByTagName('link')->item(0)->firstChild->nodeValue);die;
+			$json['link'] = $feed->getElementsByTagName('channel')->item(0)->getElementsByTagName('link')->item(0)->firstChild->nodeValue;
+			$json['description'] = $feed->getElementsByTagName('channel')->item(0)->getElementsByTagName('description')->item(0)->firstChild->nodeValue;
+			// $json[‘link’] = $feed->getElementsByTagName(‘channel’)->item(0)->getElementsByTagName(‘link’)->item(0)->firstChild->nodeValue;
+
+			$items = $feed->getElementsByTagName('channel')->item(0)->getElementsByTagName('item');
+
+			$json['item'] = array();
+			$i = 0;
+
+			foreach($items as $item) {
+
+			$title = $item->getElementsByTagName('title')->item(0)->firstChild->nodeValue;
+			$description = $item->getElementsByTagName('description')->item(0)->firstChild->nodeValue;
+			$date = $this->convertDateFormat($item->getElementsByTagName('pubDate')->item(0)->firstChild->nodeValue);
+			$guid = $item->getElementsByTagName('guid')->item(0)->firstChild->nodeValue;
+			$thumbnail = $item->getElementsByTagName('thumbnail')->item(0)->firstChild->nodeValue;
+			$link=$item->getElementsByTagName('link')->item(0)->firstChild->nodeValue;
+			// echo "select * from ".$wpdb->prefix."posts where post_type='pc_feed_posts' and post_title='".addslashes($title)."'";die;
+			$row=$wpdb->get_row("select * from ".$wpdb->prefix."posts where post_type='pc_feed_posts' and post_title='".addslashes($title)."'");
+
+			if(!$row){
+				$my_post = array(
+				'post_title'    => wp_strip_all_tags($title),
+				'post_content'  => '',
+				'post_type'=>'pc_feed_posts',
+				'post_status'   => 'publish'
+				);
+
+				// Insert the post into the database
+				$lastid =wp_insert_post( $my_post );
+
+
+				update_post_meta($lastid,'pc_feed_post_description',$description);
+				update_post_meta($lastid,'pc_feed_post_date',$date);
+				update_post_meta($lastid,'pc_feed_post_link',$link);
+				update_post_meta($lastid,'pc_feed_post_id',$pcid);
+			}
+
+			$json['item'][] = array("title"=>$title,"description"=>$description,"image"=>$thumbnail,"date"=>$date,"link"=>$link);
+
+			}
+
+			echo json_encode($json);
+		}
+		die;
+	}
+
+	function convertDateFormat($inputDate) {
+	    // Create a DateTime object from the input date string
+	    $dateTime = DateTime::createFromFormat('D, d M Y H:i:s O', $inputDate);
+
+	    // Check if the conversion was successful
+	    if ($dateTime !== false) {
+	        // Format the DateTime object as "Y-m-d H:i:s"
+	        return $dateTime->format('Y-m-d H:i:s');
+	    } else {
+	        // Return an error message or handle the error as needed
+	        return "Invalid date format";
+	    }
+	}
+
+	function getTimeAgo($givenDatetimeString) {
+	    // Convert the string to a DateTime object
+	    $givenDatetime = DateTime::createFromFormat('Y-m-d H:i:s', $givenDatetimeString);
+
+	    // Get the current datetime
+	    $currentDatetime = new DateTime();
+
+	    // Calculate the difference
+	    $timeDifference = $currentDatetime->diff($givenDatetime);
+
+	    // Determine the appropriate time unit
+	    if ($timeDifference->y > 0) {
+	        $timeAgo = $timeDifference->y . ' year' . ($timeDifference->y > 1 ? 's' : '') . ' ago';
+	    } elseif ($timeDifference->m > 0) {
+	        $timeAgo = $timeDifference->m . ' month' . ($timeDifference->m > 1 ? 's' : '') . ' ago';
+	    } elseif ($timeDifference->d > 0) {
+	        $timeAgo = $timeDifference->d . ' day' . ($timeDifference->d > 1 ? 's' : '') . ' ago';
+	    } elseif ($timeDifference->h > 0) {
+	        $timeAgo = $timeDifference->h . ' hour' . ($timeDifference->h > 1 ? 's' : '') . ' ago';
+	    } elseif ($timeDifference->i > 0) {
+	        $timeAgo = $timeDifference->i . ' minute' . ($timeDifference->i > 1 ? 's' : '') . ' ago';
+	    } else {
+	        $timeAgo = 'Just now';
+	    }
+
+	    return $timeAgo;
+	}
+
+	function tradingviewalert(){
+		echo "hello";die;	
 	}
 
 	function loading_func(){
 		global $wpdb;
+
+		if(isset($_GET['tradingviewalert'])){
+			$this->tradingviewalert();
+		}
+
+		if(isset($_GET['scrapData'])){
+			$this->scrapData();
+		}
 
 		if(isset($_GET['loadfeed'])){
 			$this->loadfeed();
@@ -930,7 +1094,7 @@ class EmailCampaign{
 	    'search_items'       => __( 'Search Campaign' ),
 	    'not_found'          => __( 'No Campaigns found' ),
 	    'not_found_in_trash' => __( 'No Campaigns found in the Trash' ), 
-	    'parent_item_colon'  => ’,
+	    'parent_item_colon'  => '',
 	    'menu_name'          => 'Campaigns'
 	  );
 	  $args = array(
@@ -958,7 +1122,7 @@ class EmailCampaign{
 	    'search_items'       => __( 'Search Template' ),
 	    'not_found'          => __( 'No Templates found' ),
 	    'not_found_in_trash' => __( 'No Templates found in the Trash' ), 
-	    'parent_item_colon'  => ’,
+	    'parent_item_colon'  => '',
 	    'menu_name'          => 'Templates'
 	  );
 	  $args1 = array(
@@ -985,7 +1149,7 @@ class EmailCampaign{
 	    'search_items'       => __( 'Search Custom Field' ),
 	    'not_found'          => __( 'No Custom Fields found' ),
 	    'not_found_in_trash' => __( 'No Custom Fields found in the Trash' ), 
-	    'parent_item_colon'  => ’,
+	    'parent_item_colon'  => '',
 	    'menu_name'          => 'Custom Fields'
 	  );
 	  $args1 = array(
@@ -1012,7 +1176,7 @@ class EmailCampaign{
 	    'search_items'       => __( 'Search Setting Field' ),
 	    'not_found'          => __( 'No Setting Fields found' ),
 	    'not_found_in_trash' => __( 'No Setting Fields found in the Trash' ), 
-	    'parent_item_colon'  => ’,
+	    'parent_item_colon'  => '',
 	    'menu_name'          => 'Setting Fields'
 	  );
 	  $args2 = array(
@@ -1039,7 +1203,7 @@ class EmailCampaign{
 	    'search_items'       => __( 'Search Contact' ),
 	    'not_found'          => __( 'No Contacts found' ),
 	    'not_found_in_trash' => __( 'No Contacts found in the Trash' ), 
-	    'parent_item_colon'  => ’,
+	    'parent_item_colon'  => '',
 	    'menu_name'          => 'Contacts'
 	  );
 	  $args2 = array(
@@ -1066,7 +1230,7 @@ class EmailCampaign{
 	    'search_items'       => __( 'Search List' ),
 	    'not_found'          => __( 'No Lists found' ),
 	    'not_found_in_trash' => __( 'No Lists found in the Trash' ), 
-	    'parent_item_colon'  => ’,
+	    'parent_item_colon'  => '',
 	    'menu_name'          => 'Lists'
 	  );
 	  $args2 = array(
@@ -1094,7 +1258,7 @@ class EmailCampaign{
 	    'search_items'       => __( 'Search Feed' ),
 	    'not_found'          => __( 'No Feeds found' ),
 	    'not_found_in_trash' => __( 'No Feeds found in the Trash' ), 
-	    'parent_item_colon'  => ’,
+	    'parent_item_colon'  => '',
 	    'menu_name'          => 'Feeds'
 	  );
 
@@ -1109,6 +1273,34 @@ class EmailCampaign{
 	    'show_ui'            => true,
 	  );
 	  register_post_type( 'pc_feeds', $args2 );
+
+	  $labels3 = array(
+	    'name'               => _x( 'Feed Posts', 'post type general name' ),
+	    'singular_name'      => _x( 'Feed Post', 'post type singular name' ),
+	    'add_new'            => _x( 'Add New', 'feed' ),
+	    'add_new_item'       => __( 'Add New Feed Post' ),
+	    'edit_item'          => __( 'Edit Feed Post' ),
+	    'new_item'           => __( 'New Feed  Post' ),
+	    'all_items'          => __( 'All Feed Posts' ),
+	    'view_item'          => __( 'View Feed Post' ),
+	    'search_items'       => __( 'Search Feed Post' ),
+	    'not_found'          => __( 'No Feed Posts found' ),
+	    'not_found_in_trash' => __( 'No Feed Posts found in the Trash' ), 
+	    'parent_item_colon'  => '',
+	    'menu_name'          => 'Feed Posts'
+	  );
+
+	  $args3 = array(
+	    'labels'        => $labels3,
+	    'description'   => 'Holds our products and product specific data',
+	    'public'        => false,
+	    'menu_position' => 8,
+	    'supports'      => array( 'title'),
+	    'has_archive'   => true,
+	    'show_in_menu'=>'pc_email_campaign',
+	    'show_ui'            => true,
+	  );
+	  register_post_type( 'pc_feed_posts', $args3 );
 	}
 
 	function addMetaBoxes(){
@@ -1282,10 +1474,377 @@ class EmailCampaign{
 	        'pc-tools',
 	        [$this,'pc_tools']
 	    );
+
+	    add_submenu_page(
+	        'pc_email_campaign',
+	        __( 'Seo Tool', 'textdomain' ),
+	        __( 'Seo Tool', 'textdomain' ),
+	        'manage_options',
+	        'pc-seo-tool',
+	        [$this,'pc_seo_tool']
+	    );
+
+	    add_submenu_page(
+	        'pc_email_campaign',
+	        __( 'All Feed Posts', 'textdomain' ),
+	        __( 'All Feed Posts', 'textdomain' ),
+	        'manage_options',
+	        'pc-feed-posts',
+	        [$this,'pc_feed_posts']
+	    );
+
+	    add_submenu_page(
+	        'pc_email_campaign',
+	        __( 'System User', 'textdomain' ),
+	        __( 'System User', 'textdomain' ),
+	        'manage_options',
+	        'pc-system-user',
+	        [$this,'pc_system_user']
+	    );
+	}
+
+	function pc_seo_tool(){
+		require_once("views/pc_seo_tool.php");
+	}
+
+	function pc_feed_posts(){
+		require_once("views/pc_feed_posts.php");
 	}
 
 	function pc_tools(){
 		require_once("views/tools.php");
+	}
+
+	function pc_system_user(){
+		require_once("views/pc_system_user.php");
+	}
+
+	function system_user_read(){
+		global $wpdb;
+		$limit = isset($_POST['limit']) ? intval($_POST['limit']) : 10;
+		$offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+		
+		$base_query = "SELECT id, service, username, status, token, clientid FROM ".$wpdb->prefix."email_clients";
+		
+		$query = $base_query . " LIMIT ".$offset.",".$limit;
+		$results = $wpdb->get_results($query);
+		
+		$count_query = "SELECT COUNT(*) FROM ".$wpdb->prefix."email_clients";
+		$total = $wpdb->get_var($count_query);
+		
+		wp_send_json_success(array('data' => $results, 'total' => intval($total)));
+	}
+
+	function system_user_create(){
+		global $wpdb;
+		
+		if(!isset($_POST['email']) || !isset($_POST['service']) || !isset($_POST['username'])){
+			wp_send_json_error(array('message' => 'Missing required fields'));
+		}
+		
+		$email = sanitize_email($_POST['email']);
+		$service = sanitize_text_field($_POST['service']);
+		$username = sanitize_text_field($_POST['username']);
+		$status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : 'active';
+		$port = isset($_POST['port']) ? intval($_POST['port']) : 587;
+		$host = isset($_POST['host']) ? sanitize_text_field($_POST['host']) : '';
+		
+		$data = array(
+			'email' => $email,
+			'service' => $service,
+			'username' => $username,
+			'status' => $status,
+			'port' => $port,
+			'host' => $host,
+			'password' => '',
+			'clientid' => '',
+			'secret' => '',
+			'token' => ''
+		);
+		
+		$format = array('%s', '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s');
+		
+		// Add fields based on service type
+		if(strtolower($service) == 'yahoo'){
+			$password = isset($_POST['password']) ? $_POST['password'] : '';
+			$data['password'] = $password;
+		} else {
+			$clientid = isset($_POST['clientid']) ? sanitize_text_field($_POST['clientid']) : '';
+			$secret = isset($_POST['secret']) ? sanitize_text_field($_POST['secret']) : '';
+			$token = isset($_POST['token']) ? $_POST['token'] : '';
+			$data['clientid'] = $clientid;
+			$data['secret'] = $secret;
+			$data['token'] = $token;
+		}
+		
+		$wpdb->insert(
+			$wpdb->prefix.'email_clients',
+			$data,
+			$format
+		);
+		
+		if($wpdb->insert_id){
+			wp_send_json_success(array('message' => 'Record created successfully', 'id' => $wpdb->insert_id));
+		} else {
+			wp_send_json_error(array('message' => 'Failed to create record: ' . $wpdb->last_error));
+		}
+	}
+
+	function system_user_update(){
+		global $wpdb;
+		
+		if(!isset($_POST['id'])){
+			wp_send_json_error(array('message' => 'Missing record ID'));
+		}
+		
+		$id = intval($_POST['id']);
+		
+		// Get the record
+		$record = $wpdb->get_row($wpdb->prepare("SELECT * FROM ".$wpdb->prefix."email_clients WHERE id=%d", $id));
+		if(!$record){
+			wp_send_json_error(array('message' => 'Record not found'));
+		}
+		
+		$service = isset($_POST['service']) ? sanitize_text_field($_POST['service']) : $record->service;
+		$username = isset($_POST['username']) ? sanitize_text_field($_POST['username']) : $record->username;
+		$status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : $record->status;
+		$port = isset($_POST['port']) ? intval($_POST['port']) : $record->port;
+		$host = isset($_POST['host']) ? sanitize_text_field($_POST['host']) : $record->host;
+		
+		// Handle fields based on service type
+		if(strtolower($service) == 'yahoo'){
+			$password = isset($_POST['password']) ? $_POST['password'] : $record->password;
+			// Clear OAuth fields for yahoo
+			$data = array(
+				'service' => $service,
+				'username' => $username,
+				'status' => $status,
+				'port' => $port,
+				'host' => $host,
+				'password' => $password,
+				'clientid' => '',
+				'secret' => '',
+				'token' => ''
+			);
+			$format = array('%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s');
+		} else {
+			$clientid = isset($_POST['clientid']) ? sanitize_text_field($_POST['clientid']) : $record->clientid;
+			$secret = isset($_POST['secret']) ? sanitize_text_field($_POST['secret']) : $record->secret;
+			$token = isset($_POST['token']) ? $_POST['token'] : $record->token;
+			// Clear password for non-yahoo
+			$data = array(
+				'service' => $service,
+				'username' => $username,
+				'status' => $status,
+				'port' => $port,
+				'host' => $host,
+				'password' => '',
+				'clientid' => $clientid,
+				'secret' => $secret,
+				'token' => $token
+			);
+			$format = array('%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%s');
+		}
+		
+		$updated = $wpdb->update(
+			$wpdb->prefix.'email_clients',
+			$data,
+			array('id' => $id),
+			$format,
+			array('%d')
+		);
+		
+		if($updated !== false){
+			wp_send_json_success(array('message' => 'Record updated successfully'));
+		} else {
+			wp_send_json_error(array('message' => 'Failed to update record'));
+		}
+	}
+
+	function system_user_delete(){
+		global $wpdb;
+		
+		if(!isset($_POST['id'])){
+			wp_send_json_error(array('message' => 'Missing record ID'));
+		}
+		
+		$id = intval($_POST['id']);
+		
+		$deleted = $wpdb->delete(
+			$wpdb->prefix.'email_clients',
+			array('id' => $id),
+			array('%d')
+		);
+		
+		if($deleted){
+			wp_send_json_success(array('message' => 'Record deleted successfully'));
+		} else {
+			wp_send_json_error(array('message' => 'Failed to delete record'));
+		}
+	}
+
+	function system_user_get(){
+		global $wpdb;
+		
+		if(!isset($_POST['id'])){
+			wp_send_json_error(array('message' => 'Missing record ID'));
+		}
+		
+		$id = intval($_POST['id']);
+		
+		$record = $wpdb->get_row($wpdb->prepare("SELECT * FROM ".$wpdb->prefix."email_clients WHERE id=%d", $id));
+		
+		if($record){
+			wp_send_json_success(array('data' => $record));
+		} else {
+			wp_send_json_error(array('message' => 'Record not found'));
+		}
+	}
+
+	function system_user_get_auth_url(){
+		global $wpdb;
+		
+		if(!isset($_POST['id'])){
+			wp_send_json_error(array('message' => 'Missing record ID'));
+		}
+		
+		$id = intval($_POST['id']);
+		$record = $wpdb->get_row($wpdb->prepare("SELECT * FROM ".$wpdb->prefix."email_clients WHERE id=%d", $id));
+		
+		if(!$record || strtolower($record->service) != 'gmail'){
+			wp_send_json_error(array('message' => 'Invalid record or not a Gmail service'));
+		}
+		
+		if(empty($record->clientid)){
+			wp_send_json_error(array('message' => 'Client ID is missing'));
+		}
+		
+		$redirect_uri = admin_url('admin-ajax.php?action=system_user_oauth_callback&id='.$id);
+		$scope = 'https://mail.google.com/';
+		$response_type = 'code';
+		$access_type = 'offline';
+		$prompt = 'consent';
+		
+		$auth_url = 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query(array(
+			'client_id' => $record->clientid,
+			'redirect_uri' => $redirect_uri,
+			'scope' => $scope,
+			'response_type' => $response_type,
+			'access_type' => $access_type,
+			'prompt' => $prompt
+		));
+		
+		wp_send_json_success(array('auth_url' => $auth_url));
+	}
+
+	function system_user_save_token(){
+		global $wpdb;
+		
+		if(!isset($_POST['id']) || !isset($_POST['token_data'])){
+			wp_send_json_error(array('message' => 'Missing required fields'));
+		}
+		
+		$id = intval($_POST['id']);
+		$token_data = $_POST['token_data'];
+		
+		// If token_data is a string, decode it
+		if(is_string($token_data)){
+			$token_data = json_decode(stripslashes($token_data), true);
+		}
+		
+		// Convert to JSON string format as specified
+		$token_json = json_encode($token_data);
+		
+		$updated = $wpdb->update(
+			$wpdb->prefix.'email_clients',
+			array('token' => $token_json),
+			array('id' => $id),
+			array('%s'),
+			array('%d')
+		);
+		
+		if($updated !== false){
+			wp_send_json_success(array('message' => 'Token saved successfully'));
+		} else {
+			wp_send_json_error(array('message' => 'Failed to save token'));
+		}
+	}
+
+	// Handle OAuth callback
+	function system_user_oauth_callback(){
+		global $wpdb;
+		
+		if(!isset($_GET['id']) || !isset($_GET['code'])){
+			echo '<script>window.close();</script>';
+			die();
+		}
+		
+		$id = intval($_GET['id']);
+		$code = sanitize_text_field($_GET['code']);
+		
+		$record = $wpdb->get_row($wpdb->prepare("SELECT * FROM ".$wpdb->prefix."email_clients WHERE id=%d", $id));
+		
+		if(!$record || empty($record->clientid) || empty($record->secret)){
+			echo '<script>alert("Invalid record or missing credentials"); window.close();</script>';
+			die();
+		}
+		
+		$redirect_uri = admin_url('admin-ajax.php?action=system_user_oauth_callback&id='.$id);
+		
+		// Exchange code for token
+		$token_url = 'https://oauth2.googleapis.com/token';
+		$token_data = array(
+			'code' => $code,
+			'client_id' => $record->clientid,
+			'client_secret' => $record->secret,
+			'redirect_uri' => $redirect_uri,
+			'grant_type' => 'authorization_code'
+		);
+		
+		$response = wp_remote_post($token_url, array(
+			'body' => $token_data,
+			'timeout' => 30
+		));
+		
+		if(is_wp_error($response)){
+			echo '<script>alert("Error: ' . esc_js($response->get_error_message()) . '"); window.close();</script>';
+			die();
+		}
+		
+		$body = wp_remote_retrieve_body($response);
+		$token_response = json_decode($body, true);
+		
+		if(isset($token_response['error'])){
+			echo '<script>alert("Error: ' . esc_js($token_response['error_description']) . '"); window.close();</script>';
+			die();
+		}
+		
+		// Add created timestamp
+		$token_response['created'] = time();
+		
+		// Save token
+		$token_json = json_encode($token_response);
+		$wpdb->update(
+			$wpdb->prefix.'email_clients',
+			array('token' => $token_json),
+			array('id' => $id),
+			array('%s'),
+			array('%d')
+		);
+		
+		// Send message to parent and close
+		echo '<script>
+			if(window.opener){
+				window.opener.postMessage("oauth_success", "*");
+				setTimeout(function(){
+					window.close();
+				}, 500);
+			} else {
+				alert("Authorization successful! Token has been saved.");
+				window.close();
+			}
+		</script>';
+		die();
 	}
 
 	function email_campaign(){
